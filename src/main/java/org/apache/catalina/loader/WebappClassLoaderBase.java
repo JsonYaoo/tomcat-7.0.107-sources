@@ -254,6 +254,7 @@ public abstract class WebappClassLoaderBase extends URLClassLoader
      * Construct a new ClassLoader with no defined repositories and no
      * parent ClassLoader.
      */
+    // 构造一个没有定义的存储库和父类加载器的新类加载器。
     public WebappClassLoaderBase() {
 
         super(new URL[0]);
@@ -473,7 +474,11 @@ public abstract class WebappClassLoaderBase extends URLClassLoader
     @Deprecated
     protected ClassLoader system = null;
 
-
+    /**
+     * 20210712
+     * 用于加载 JavaSE 类的引导类加载器。 在某些实现中，这个类加载器始终为空，在这些情况下，
+     * {@link ClassLoader#getParent()} 将在系统类加载器上递归调用，并使用最后一个非空结果。
+     */
     /**
      * The bootstrap class loader used to load the JavaSE classes. In some
      * implementations this class loader is always <code>null</code> and in
@@ -1390,6 +1395,7 @@ public abstract class WebappClassLoaderBase extends URLClassLoader
             }
         }
 
+        // 如果可能，让我们的超类定位这个类（如果找不到，则抛出 ClassNotFoundException）
         // Ask our superclass to locate this class, if possible
         // (throws ClassNotFoundException if it is not found)
         Class<?> clazz = null;
@@ -1398,6 +1404,7 @@ public abstract class WebappClassLoaderBase extends URLClassLoader
                 log.trace("      findClassInternal(" + name + ")");
             if (hasExternalRepositories && searchExternalFirst) {
                 try {
+                    // webapp类加载器加载
                     clazz = super.findClass(name);
                 } catch(ClassNotFoundException cnfe) {
                     // Ignore - will search internal repositories next
@@ -1796,8 +1803,17 @@ public abstract class WebappClassLoaderBase extends URLClassLoader
 
     }
 
-
     /**
+     * 20210712
+     * A. 加载具有指定名称的类，使用以下算法进行搜索，直到找到并返回该类。 如果找不到该类，则返回 ClassNotFoundException。
+     *      1) 调用 findLoadedClass(String) 以检查类是否已加载。 如果是，则返回相同的 Class 对象。
+     *      2) 如果委托属性设置为 true，则调用父类加载器的 loadClass() 方法（如果有）。
+     *      3) 调用 findClass() 在我们本地定义的存储库中查找此类。
+     *      4) 调用我们的父类加载器的 loadClass() 方法，如果有的话。
+     * B. 如果使用上述步骤找到了该类，并且解析标志为真，则此方法将对生成的 Class 对象调用 resolveClass(Class)。
+     */
+    /**
+     * A.
      * Load the class with the specified name, searching using the following
      * algorithm until it finds and returns the class.  If the class cannot
      * be found, returns <code>ClassNotFoundException</code>.
@@ -1813,6 +1829,8 @@ public abstract class WebappClassLoaderBase extends URLClassLoader
      * <li>Call the <code>loadClass()</code> method of our parent
      *     class loader, if any.</li>
      * </ul>
+     *
+     * B.
      * If the class was found using the above steps, and the
      * <code>resolve</code> flag is <code>true</code>, this method will then
      * call <code>resolveClass(Class)</code> on the resulting Class object.
@@ -1839,7 +1857,8 @@ public abstract class WebappClassLoaderBase extends URLClassLoader
                 }
             }
 
-            // (0) Check our previously loaded local class cache
+            // (0) Check our previously loaded local class cache 检查我们之前加载的本地类缓存
+            // 查找Tomcat缓存, 调用 findLoadedClass0(String) 以检查类是否已加载。 如果是，则返回相同的 Class 对象。
             clazz = findLoadedClass0(name);
             if (clazz != null) {
                 if (log.isDebugEnabled())
@@ -1849,7 +1868,8 @@ public abstract class WebappClassLoaderBase extends URLClassLoader
                 return (clazz);
             }
 
-            // (0.1) Check our previously loaded class cache
+            // (0.1) Check our previously loaded class cache 检查我们之前加载的类缓存
+            // 查找JVM缓存, 调用 findLoadedClass(String) 以检查类是否已加载。 如果是，则返回相同的 Class 对象。
             clazz = findLoadedClass(name);
             if (clazz != null) {
                 if (log.isDebugEnabled())
@@ -1859,9 +1879,11 @@ public abstract class WebappClassLoaderBase extends URLClassLoader
                 return (clazz);
             }
 
+            // 尝试使用系统类加载器加载类，以防止 webapp 覆盖 J2SE 类
             // (0.2) Try loading the class with the system class loader, to prevent
             //       the webapp from overriding J2SE classes
             try {
+                // 扩展类加载器加载
                 clazz = j2seClassLoader.loadClass(name);
                 if (clazz != null) {
                     if (resolve)
@@ -1895,11 +1917,12 @@ public abstract class WebappClassLoaderBase extends URLClassLoader
 
             boolean delegateLoad = delegate || filter(name);
 
-            // (1) Delegate to our parent if requested
+            // (1) Delegate to our parent if requested 如果需要，委托给我们的父类加载器
             if (delegateLoad) {
                 if (log.isDebugEnabled())
                     log.debug("  Delegating to parent classloader1 " + parent);
                 try {
+                    // 用父类加载器(系统类加载器)加载
                     clazz = Class.forName(name, false, parent);
                     if (clazz != null) {
                         if (log.isDebugEnabled())
@@ -1913,10 +1936,11 @@ public abstract class WebappClassLoaderBase extends URLClassLoader
                 }
             }
 
-            // (2) Search local repositories
+            // (2) Search local repositories 搜索本地存储库
             if (log.isDebugEnabled())
                 log.debug("  Searching local repositories");
             try {
+                // webapp类加载器加载, 搜索本地存储库
                 clazz = findClass(name);
                 if (clazz != null) {
                     if (log.isDebugEnabled())
@@ -1929,11 +1953,12 @@ public abstract class WebappClassLoaderBase extends URLClassLoader
                 // Ignore
             }
 
-            // (3) Delegate to parent unconditionally
+            // (3) Delegate to parent unconditionally 无条件委托给父类加载器
             if (!delegateLoad) {
                 if (log.isDebugEnabled())
                     log.debug("  Delegating to parent classloader at end: " + parent);
                 try {
+                    // 无条件用父类加载器(系统类加载器)加载
                     clazz = Class.forName(name, false, parent);
                     if (clazz != null) {
                         if (log.isDebugEnabled())
